@@ -41,4 +41,10 @@ class WiltChangeNotificationParameters {
   /// This will retrieve the body of the attachment in Base64 format
   /// as well as the stub data that is normally supplied.
   bool includeAttachments = false;
+
+  /// Limit
+  ///
+  ///  We set a limit on the maximum number of change documents returned to
+  ///  OOM conditions in mobile applications
+  int limit = 100;
 }

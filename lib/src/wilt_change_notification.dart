@@ -27,7 +27,7 @@ part of wilt;
 /// with CouchDb to allow notificatons to work, if you do not supply
 /// auth credentials before starting notifications an exception is raised.
 class _WiltChangeNotification {
-  _WiltChangeNotification(this._host, this._port, this._wilt,
+  _WiltChangeNotification(this._host, this._port, this._path, this._wilt,
       {this.useSSL, this.dbName, this.parameters}) {
     parameters ??= WiltChangeNotificationParameters();
 
@@ -52,6 +52,9 @@ class _WiltChangeNotification {
 
   /// Port number
   final int _port;
+
+  /// Base path
+  final String _path;
 
   /// HTTP scheme
   final bool? useSSL;
@@ -82,35 +85,42 @@ class _WiltChangeNotification {
       return;
     }
 
+    _getChanges();
+  }
+
+  Future<void> _getChanges() async {
     // Create the URL from the parameters
     String path;
     if (_sequence != null) {
       path =
-          '$dbName/_changes?&since=$_sequence&descending=${parameters!.descending}&include_docs=${parameters!.includeDocs}&attachments=${parameters!.includeAttachments}';
+          '$dbName/_changes?&since=$_sequence&descending=${parameters!.descending}&include_docs=${parameters!.includeDocs}&attachments=${parameters!.includeAttachments}&limit=${parameters!.limit}';
     } else {
       path =
-          '$dbName/_changes?&descending=${parameters!.descending}&include_docs=${parameters!.includeDocs}&attachments=${parameters!.includeAttachments}';
+          '$dbName/_changes?&descending=${parameters!.descending}&include_docs=${parameters!.includeDocs}&attachments=${parameters!.includeAttachments}&limit=${parameters!.limit}';
     }
 
-    final scheme = useSSL! ? 'https://' : 'http://';
-    final url = '$scheme$_host:${_port.toString()}/$path';
+    final url = _buildUrl(
+        useSSL: useSSL, host: _host, port: _port, basePath: _path, path: path);
 
     // Open the request
     try {
-      _wilt.getString(url).then((dynamic result) {
-        // Process the change notification
-        try {
-          final Map<dynamic, dynamic> dbChange = json.decode(result);
-          processDbChange(dbChange as Map<String, dynamic>);
-        } on Exception catch (e) {
-          // Recoverable error, send the client an error event
-          print('WiltChangeNotification::MonitorChanges json decode fail $e');
-          final notification =
-              WiltChangeNotificationEvent.decodeError(result, e.toString());
-
-          _changeNotification.add(notification);
+      paused = true;
+      final result = await _wilt.getString(url);
+      // Process the change notification
+      try {
+        final Map<dynamic, dynamic> dbChange = json.decode(result);
+        processDbChange(dbChange as Map<String, dynamic>);
+        if (dbChange['pending'] > 0) {
+          await _getChanges();
         }
-      });
+      } on Exception catch (e) {
+        // Recoverable error, send the client an error event
+        print('WiltChangeNotification::MonitorChanges json decode fail $e');
+        final notification =
+            WiltChangeNotificationEvent.decodeError(result, e.toString());
+
+        _changeNotification.add(notification);
+      }
     } on Exception catch (e) {
       // Unrecoverable error, send the client an abort event
       print('WiltChangeNotification::MonitorChanges unable to contact '
@@ -118,6 +128,8 @@ class _WiltChangeNotification {
       final notification = WiltChangeNotificationEvent.abort(e.toString());
 
       _changeNotification.add(notification);
+    } finally {
+      paused = false;
     }
   }
 
@@ -132,6 +144,8 @@ class _WiltChangeNotification {
 
       return;
     }
+
+    final pendingChanged = change['pending'];
 
     // Update the last sequence number
     _sequence = WiltUserUtils.getCnSequenceNumber(change['last_seq']);

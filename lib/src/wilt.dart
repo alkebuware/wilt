@@ -19,7 +19,7 @@ class Wilt {
   /// You can do this here but you must supply either a browser or
   /// server HTTP adapter
   /// to use.
-  Wilt(this.host, {this.port = 5984, this.useSSL = false});
+  Wilt(this.host, {this.port = 5984, this.useSSL = false, this.path = ''});
 
   /// URL constant for CouchDB SESSION function
   static const String session = '/_session';
@@ -89,14 +89,14 @@ class Wilt {
   /// Port number, defaults to 5984 (the couchdb default)
   final int port;
 
+  /// Base path of couchdb defaults to ""
+  final String path;
+
   /// Use SSL when connecting to couchdb, defaults to false
   final bool useSSL;
 
   /// Auth Type for change notification authorization
   String? _authType;
-
-  /// HTTP client
-  final http.Client _client = http.Client();
 
   /// Change notification
   _WiltChangeNotification? _changeNotifier;
@@ -136,8 +136,8 @@ class Wilt {
     }
 
     // Build the URL
-    final scheme = useSSL ? 'https://' : 'http://';
-    final wiltUrl = '$scheme$host:$port$url';
+    final wiltUrl = _buildUrl(
+        useSSL: useSSL, host: host, port: port, basePath: path, path: url);
 
     // Check for authentication
     if (_user != null) {
@@ -775,7 +775,7 @@ class Wilt {
     }
 
     changeNotificationDbName = name;
-    _changeNotifier = _WiltChangeNotification(host, port, this,
+    _changeNotifier = _WiltChangeNotification(host, port, path, this,
         useSSL: useSSL, dbName: name, parameters: parameters);
   }
 
@@ -858,6 +858,7 @@ class Wilt {
       [String? data, Map<String, String> headers = const {}]) {
     //  Initialise
     final completer = Completer<dynamic>();
+    final client = http.Client();
 
     /// Successful completion
     void onSuccess(http.Response response) {
@@ -1036,24 +1037,24 @@ class Wilt {
     // Query CouchDB over HTTP
     final uri = Uri.parse(url);
     if (httpMethod == 'GET') {
-      _client.get(uri, headers: headers).then(onSuccess, onError: onError);
+      client.get(uri, headers: headers).then(onSuccess, onError: onError);
     } else if (httpMethod == 'PUT') {
-      _client
+      client
           .put(uri, headers: headers, body: data)
           .then(onSuccess, onError: onError);
     } else if (httpMethod == 'POST') {
-      _client
+      client
           .post(uri, headers: headers, body: data)
           .then(onSuccess, onError: onError);
     } else if (httpMethod == 'HEAD') {
-      _client.head(uri, headers: headers).then(onSuccess, onError: onError);
+      client.head(uri, headers: headers).then(onSuccess, onError: onError);
     } else if (httpMethod == 'DELETE') {
-      _client.delete(uri, headers: headers).then(onSuccess, onError: onError);
+      client.delete(uri, headers: headers).then(onSuccess, onError: onError);
     } else if (httpMethod == 'COPY') {
       final encodedUrl = Uri.parse(url);
       final request = http.Request('COPY', encodedUrl);
       request.headers.addAll(headers);
-      _client.send(request).then(onCopySuccess, onError: onError);
+      client.send(request).then(onCopySuccess, onError: onError);
     }
 
     return completer.future;
@@ -1062,6 +1063,7 @@ class Wilt {
   /// Specialised 'get' for change notifications
   Future<String> getString(String url) {
     final Completer<dynamic> completer = Completer<String>();
+    final client = http.Client();
 
     // Must have authentication
     final wiltHeaders = <String, String>{};
@@ -1081,10 +1083,34 @@ class Wilt {
       }
     }
     final uri = Uri.parse(url);
-    _client.get(uri, headers: wiltHeaders).then((dynamic response) {
+    client.get(uri, headers: wiltHeaders).then((dynamic response) {
       completer.complete(response.body);
     });
 
     return completer.future as Future<String>;
   }
+}
+
+String _buildUrl(
+    {required bool? useSSL,
+    required String? host,
+    required int port,
+    required String basePath,
+    required String path}) {
+  final scheme = useSSL == true ? 'https://' : 'http://';
+  var formattedBasePath = basePath;
+  if (formattedBasePath.startsWith('/')) {
+    formattedBasePath = formattedBasePath.substring(1);
+  }
+  if (formattedBasePath.endsWith('/')) {
+    formattedBasePath =
+        formattedBasePath.substring(0, formattedBasePath.length - 1);
+  }
+
+  var formattedPath = path;
+  if (formattedPath.startsWith('/')) {
+    formattedPath = formattedPath.substring(1);
+  }
+  final url = '$scheme$host:$port/$formattedBasePath/$formattedPath';
+  return url;
 }
